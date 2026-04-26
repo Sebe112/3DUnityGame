@@ -111,6 +111,8 @@ namespace AI
         /// <summary>Returns the nearest connected player's Transform, or null.</summary>
         public Transform GetNearestPlayer()
         {
+            if (NetworkManager.Singleton == null) return null;
+
             Transform nearest = null;
             float bestDist = float.MaxValue;
 
@@ -122,7 +124,7 @@ namespace AI
                 if (d < bestDist)
                 {
                     bestDist = d;
-                    nearest  = playerObj.transform;
+                    nearest = playerObj.transform;
                 }
             }
             return nearest;

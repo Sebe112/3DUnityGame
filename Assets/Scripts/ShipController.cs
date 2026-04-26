@@ -1,7 +1,10 @@
+using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
 
 [RequireComponent(typeof(Rigidbody))]
-public class ShipController : MonoBehaviour
+[RequireComponent(typeof(NetworkObject))]
+public class ShipController : NetworkBehaviour
 {
     [Header("Thrust")]
     public float thrust = 40f;
@@ -9,54 +12,81 @@ public class ShipController : MonoBehaviour
     public float minSpeed = 10f;
     public float boostMultiplier = 1.8f;
 
-    [Header("Turning (degrees per second)")]
+    [Header("Turning")]
     public float pitchSpeed = 70f;
     public float yawSpeed = 50f;
     public float rollSpeed = 110f;
-    public float bankAmount = 25f; 
+    public float bankAmount = 25f;
 
     [Header("Feel")]
     public float turnSmoothing = 4f;
 
-    Rigidbody rb;
-    float currentPitch, currentYaw, currentRoll;
+    private Rigidbody rb;
+    private float currentPitch, currentYaw, currentRoll;
 
-    void Awake()
+    private float _pitchInput, _yawInput, _rollInput;
+    private bool _boosting, _braking;
+
+
+    private void Awake()
     {
         rb = GetComponent<Rigidbody>();
         rb.useGravity = false;
-        rb.linearDamping = 0f;       // if on older Unity, use rb.drag
-        rb.angularDamping = 4f;      // if on older Unity, use rb.angularDrag
+        rb.linearDamping = 0f;
+        rb.angularDamping = 4f;
     }
 
-    void FixedUpdate()
+    public override void OnNetworkSpawn()
     {
-        float pitchInput = Input.GetAxis("Vertical");
-        float yawInput = Input.GetAxis("Horizontal");
-        float rollInput = 0f;
-        if (Input.GetKey(KeyCode.Q)) rollInput += 1f;
-        if (Input.GetKey(KeyCode.E)) rollInput -= 1f;
+        var cam = GetComponentInChildren<Camera>();
+        if (cam != null) cam.gameObject.SetActive(IsOwner);
 
-        bool boosting = Input.GetKey(KeyCode.LeftShift);
-        bool braking  = Input.GetKey(KeyCode.LeftControl);
+        var listener = GetComponentInChildren<AudioListener>();
+        if (listener != null) listener.enabled = IsOwner;
 
-        currentPitch = Mathf.Lerp(currentPitch, pitchInput, Time.fixedDeltaTime * turnSmoothing);
-        currentYaw   = Mathf.Lerp(currentYaw,   yawInput,   Time.fixedDeltaTime * turnSmoothing);
-        currentRoll  = Mathf.Lerp(currentRoll,  rollInput,  Time.fixedDeltaTime * turnSmoothing);
+        if (!IsOwner)
+        {
+            rb.isKinematic = true;
+            // Let NetworkTransform move the rigidbody for non-owners
+            var nt = GetComponent<NetworkTransform>();
+            if (nt != null) nt.enabled = true;
+        }
+    }
+
+    // Replace FixedUpdate with these two:
+    private void Update()
+    {
+        if (!IsOwner) return;
+        _pitchInput = Input.GetAxis("Vertical");
+        _yawInput = Input.GetAxis("Horizontal");
+        _rollInput = 0f;
+        if (Input.GetKey(KeyCode.Q)) _rollInput += 1f;
+        if (Input.GetKey(KeyCode.E)) _rollInput -= 1f;
+        _boosting = Input.GetKey(KeyCode.LeftShift);
+        _braking = Input.GetKey(KeyCode.LeftControl);
+    }
+
+    private void FixedUpdate()
+    {
+        if (!IsOwner) return;
+
+        currentPitch = Mathf.Lerp(currentPitch, _pitchInput, Time.fixedDeltaTime * turnSmoothing);
+        currentYaw = Mathf.Lerp(currentYaw, _yawInput, Time.fixedDeltaTime * turnSmoothing);
+        currentRoll = Mathf.Lerp(currentRoll, _rollInput, Time.fixedDeltaTime * turnSmoothing);
 
         float autoBank = -currentYaw * bankAmount;
         Quaternion deltaRot = Quaternion.Euler(
             -currentPitch * pitchSpeed * Time.fixedDeltaTime,
-             currentYaw   * yawSpeed   * Time.fixedDeltaTime,
+             currentYaw * yawSpeed * Time.fixedDeltaTime,
             (currentRoll * rollSpeed + autoBank) * Time.fixedDeltaTime
         );
         rb.MoveRotation(rb.rotation * deltaRot);
 
-        float targetSpeed = boosting ? maxSpeed * boostMultiplier
-                          : braking  ? minSpeed
-                          : Mathf.Lerp(minSpeed, maxSpeed, 0.7f); // cruise speed
+        float targetSpeed = _boosting ? maxSpeed * boostMultiplier
+                          : _braking ? minSpeed
+                          : Mathf.Lerp(minSpeed, maxSpeed, 0.7f);
 
-        Vector3 desiredVelocity = transform.forward * targetSpeed;
-        rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, desiredVelocity, Time.fixedDeltaTime * 2f);
+        rb.linearVelocity = Vector3.Lerp(rb.linearVelocity,
+            transform.forward * targetSpeed, Time.fixedDeltaTime * 2f);
     }
 }
